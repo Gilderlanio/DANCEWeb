@@ -363,6 +363,7 @@ with tab3:
                 if isinstance(x, dict)
                 else ""
             )
+        )
 
         variant_labels = {
             "transcript_ablation": "Transcript ablation",
