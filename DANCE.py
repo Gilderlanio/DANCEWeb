@@ -357,6 +357,14 @@ with tab3:
         st.dataframe(df_gene_enrichment, hide_index=True)
 
         df_snp_sense = gp.snpense(query= df["rsID"].to_list())
+        df_snp_sense_inicial = df_snp_sense.copy()
+        
+        df_snp_sense['variants'] = df_snp_sense['variants'].apply(
+            lambda x: ", ".join(
+                f"{k}: {v}"
+                for k, v in x.items()
+            ) if isinstance(x, dict) and x else ""
+        )
         
         variant_labels = {
             "transcript_ablation": "Transcript ablation",
@@ -398,15 +406,6 @@ with tab3:
             "splice_donor_region_variant": "Splice donor region",
             "splice_polypyrimidine_tract_variant": "Splice poly-pyrimidine tract"
         }
-
-        df_snp_sense_inicial = df_snp_sense.copy()
-        
-        df_snp_sense['variants'] = df_snp_sense['variants'].apply(
-            lambda x: ", ".join(
-                f"{k}: {v}"
-                for k, v in x.items()
-            ) if isinstance(x, dict) and x else ""
-        )
 
 
         # Converter contagens em flags (1 se > 0)
