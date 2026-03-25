@@ -403,7 +403,7 @@ with tab3:
         
         df_snp_sense['variants'] = df_snp_sense['variants'].apply(
             lambda x: ", ".join(
-                f"{variants_labels.get(k,k)}: {v}"
+                f"{variant_labels.get(k,k)}: {v}"
                 for k, v in x.items()
             ) if isinstance(x, dict) and x else ""
         )
