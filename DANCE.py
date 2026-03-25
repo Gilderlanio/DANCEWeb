@@ -399,22 +399,18 @@ with tab3:
             "splice_polypyrimidine_tract_variant": "Splice poly-pyrimidine tract"
         }
 
-        df_snp_sense_inicial = df_snp_sense.copy()
-
-        df_snp_sense['variants'] = df_snp_sense['variants'].apply(
-            lambda x: ", ".join(
-                f"{variant_labels.get(k, k)}: {v}"
-                for k, v in x.items()
-            ) if isinstance(x, dict and x else ""
-        )
-        
         # Converter contagens em flags (1 se > 0)
-        flags = df_snp_sense_inicial['variants'].apply(
-            lambda x: x.keys() if isinstance(x, dict) else []
-        )
+        flags = df_snp_sense_inicial['variants'].apply(lambda x: x.keys())
 
         flags_df = pd.json_normalize(flags).rename(columns=variant_labels)
         df_snp_sense = pd.concat([df_snp_sense, flags_df], axis=1)
+
+        if "variants" in df_snp_sense.columns:
+            df_snp_sense["variants"] = df_snp_sense["variants"].apply(
+                lambda x: ", ".join(x.keys()) if isinstance(x, dict) else x
+            )
+
+        df_snp_sense = df_snp_sense.rename(columns={"ensgs": "ensembl_id"})
 
         st.dataframe(df_snp_sense, hide_index=True)
     else:
