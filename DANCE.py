@@ -5,6 +5,11 @@ from st_cytoscape import cytoscape
 from PIL import Image
 from gprofiler import GProfiler
 
+import matplotlib.cm as cm
+import matplotlib.colors as mcolors
+
+
+
 st.set_page_config(page_title = "Disease-Ancestry Networks", layout='wide')
 logo = Image.open("imagens/logo.png")
 st.sidebar.image(logo, use_container_width=True, width=100)
@@ -14,7 +19,23 @@ def load_data(path: str) -> pd.DataFrame:
     """Load and cache the GWAS dataset."""
     return pd.read_csv(path, sep="\t")
 
+def get_pastel_red(value, vmin=0, vmax=1):
+    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
+    cmap = cm.Reds  # escala de vermelho
+
+    rgba = cmap(norm(value))
+
+    # transformar em pastel (mistura com branco)
+    pastel_factor = 0.5
+    r, g, b, a = rgba
+    r = r + (1 - r) * pastel_factor
+    g = g + (1 - g) * pastel_factor
+    b = b + (1 - b) * pastel_factor
+
+    return mcolors.to_hex((r, g, b))
+
 df = load_data("data/gwas_preprocessed_oct.tsv")
+af_df = load_data("data/1000genomeFrequencies_alt.tsv")
 
 st.sidebar.header("Filter")
 select_risk = st.sidebar.checkbox("Filter for risk-alleles", value=True)
@@ -169,13 +190,43 @@ with tab2:
         """,
         unsafe_allow_html=True
     )
-
-
-
-    df["SNV"] = df["rsID"] + "-" + df["Allele"]
-    agg_df = df.groupby(["Phenotype", "SNV"], as_index=False)["Odds"].max()
     if (selected_phenotype or selected_author or selected_gene or selected_region or rsid_choice):
         # usa agg_df para manter só o maior Odds por aresta
+
+        populations = ["AFR", "AMR", "EAS", "EUR", "SAS"]
+        pop = st.sidebar.selectbox("Population", populations, index=3)
+
+        df["SNV"] = df["rsID"] + "-" + df["Allele"]
+        af_df = af_df.rename(columns={"ID": "rsID"})
+        af_df["SNV_ALT"] = af_df["rsID"] + "-" + af_df["ALT"]
+
+        merged = df.merge(af_df, on="rsID", how="left", suffixes=("", "_af"))
+
+
+        def get_correct_af(row):
+            if pd.isna(row[pop]):
+                return 0
+
+            # risco = ALT
+            if row["Allele"] == row["ALT"]:
+                return row[pop]
+
+            # risco = REF
+            elif row["Allele"] == row["REF"]:
+                return 1 - row[pop]
+
+            # outro ALT não correspondente
+            else:
+                return 0
+
+        merged["AF_corrected"] = merged.apply(get_correct_af, axis=1)
+
+        merged["SNV"] = merged["rsID"] + "-" + merged["Allele"]
+        af_map = merged.groupby("SNV")["AF_corrected"].max().to_dict()
+        vmin = merged["AF_corrected"].min()
+        vmax = merged["AF_corrected"].max()
+
+        agg_df = df.groupby(["Phenotype", "SNV"], as_index=False)["Odds"].max()
         net = nx.from_pandas_edgelist(agg_df, source="Phenotype", target="SNV", edge_attr="Odds")
 
         # pega o maior Odds para normalização
@@ -192,10 +243,12 @@ with tab2:
                 net.nodes[node]["color"] = "skyblue"
                 net.nodes[node]["shape"] = "dot"
                 net.nodes[node]["size"] = 50
-            if node in df["SNV"].values:
-                net.nodes[node]["color"] = "#af5353"
-                net.nodes[node]["shape"] = "dot"
+            elif node in df["SNV"].values:
+                af = af_map.get(node, 0)
+                color = get_pastel_red(af, vmin, vmax)
+                net.nodes[node]["color"] = color
                 net.nodes[node]["size"] = 30
+                net.nodes[node]["shape"] = "dot"
 
         elements = []
         # nós
@@ -257,6 +310,12 @@ with tab2:
 
         # Renderiza Cytoscape
         selected = cytoscape(elements, stylesheet, layout=layout, height="700px")
+
+        st.markdown("**Node color = Risk Allele Frequency**")
+        st.markdown("Light pink → Low frequency | Red → High frequency")
+
+
+
         if len(selected["nodes"]) > 0:
             selected_snps = [snp.split("-")[0] for snp in selected["nodes"] if snp.startswith("rs")]
             gp = GProfiler(return_dataframe=True)
