@@ -355,14 +355,11 @@ with tab3:
 
         df_gene_enrichment = df_gene_enrichment.rename(columns=rename_map)
         st.dataframe(df_gene_enrichment, hide_index=True)
-        df_snp_sense['variants_str'] = df_snp_sense['variants'].apply(
-            lambda x: (", ".join(
-                        f"{k}: {v}"
-                        for k,v in x.items()
-                )
-                if isinstance(x, dict)
-                else ""
-            )
+        df_snp_sense['variants'] = df_snp_sense['variants'].apply(
+            lambda x: ", ".join(
+                f"{k}: {v}"
+                for k, v in x.items()
+            ) if isinstance(x, dict) and x else ""
         )
 
         variant_labels = {
