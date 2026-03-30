@@ -4,11 +4,9 @@ import networkx as nx
 from st_cytoscape import cytoscape
 from PIL import Image
 from gprofiler import GProfiler
-
+import numpy as np
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors
-
-
 
 st.set_page_config(page_title = "Disease-Ancestry Networks", layout='wide')
 logo = Image.open("imagens/logo.png")
@@ -159,15 +157,15 @@ with tab1:
 
     st.markdown("---")
 
-    for i, (col, stats) in enumerate(categorical_summary.items()):
-        with cols_layout[i % cards_per_row]:
-            st.markdown(f"""
-            <div class="nature-card">
-                <div class="nature-card-title">{col}</div>
-                <div class="nature-card-value">{stats['Most Common']}</div>
-                <div class="nature-card-subvalue">Frequency: {stats['Frequency']} | Unique: {stats['Unique']}</div>
-            </div>
-            """, unsafe_allow_html=True)
+    # for i, (col, stats) in enumerate(categorical_summary.items()):
+    #     with cols_layout[i % cards_per_row]:
+    #         st.markdown(f"""
+    #         <div class="nature-card">
+    #             <div class="nature-card-title">{col}</div>
+    #             <div class="nature-card-value">{stats['Most Common']}</div>
+    #             <div class="nature-card-subvalue">Frequency: {stats['Frequency']} | Unique: {stats['Unique']}</div>
+    #         </div>
+    #         """, unsafe_allow_html=True)
 
     st.dataframe(df, use_container_width=True, hide_index=True)
 
@@ -175,69 +173,82 @@ with tab1:
     st.download_button("📥 Download", csv, "DANCE_filtered.csv", "text/csv")
 
 #Network
+
 with tab2:
+
+    import pandas as pd
+    import networkx as nx
+    import streamlit as st
+    from gprofiler import GProfiler
 
     st.markdown(
         """
         <style>
-        /* Seleciona todos os iframes dentro dos componentes */
         iframe {
-            border: 3px solid #2E86C1;  /* cor e espessura da borda */
-            border-radius: 15px;        /* cantos arredondados */
-            box-shadow: 0 4px 15px rgba(0,0,0,0.2);  /* sombra suave */
+            border: 3px solid #2E86C1;
+            border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
         }
         </style>
         """,
         unsafe_allow_html=True
     )
+
     if (selected_phenotype or selected_author or selected_gene or selected_region or rsid_choice):
-        # usa agg_df para manter só o maior Odds por aresta
 
         populations = ["AFR", "AMR", "EAS", "EUR", "SAS"]
-        pop = st.sidebar.selectbox("Population", populations, index=3)
+        pop = st.sidebar.selectbox("Population (for network color)", populations, index=3)
 
+        # -------------------------
+        # Merge dos dados
+        # -------------------------
         df["SNV"] = df["rsID"] + "-" + df["Allele"]
+
         af_df = af_df.rename(columns={"ID": "rsID"})
-        af_df["SNV_ALT"] = af_df["rsID"] + "-" + af_df["ALT"]
-
-        merged = df.merge(af_df, on="rsID", how="left", suffixes=("", "_af"))
+        merged = df.merge(af_df, on="rsID", how="left")
 
 
-        def get_correct_af(row):
-            if pd.isna(row[pop]):
-                return 0
+        # -------------------------
+        # AF corrigida para TODAS populações
+        # -------------------------
+        def get_correct_af_all_pops(row):
+            afs = {}
+            for p in populations:
+                if row["Allele"] == row["ALT"]:
+                    afs[p] = row[p]
+                elif row["Allele"] == row["REF"]:
+                    afs[p] = 1 - row[p]
+                else:
+                    afs[p] = 0
+            return pd.Series(afs)
 
-            # risco = ALT
-            if row["Allele"] == row["ALT"]:
-                return row[pop]
 
-            # risco = REF
-            elif row["Allele"] == row["REF"]:
-                return 1 - row[pop]
+        af_corrected_all = merged.apply(get_correct_af_all_pops, axis=1)
 
-            # outro ALT não correspondente
-            else:
-                return 0
-
-        merged["AF_corrected"] = merged.apply(get_correct_af, axis=1)
+        for p in populations:
+            merged[f"AF_{p}"] = af_corrected_all[p]
 
         merged["SNV"] = merged["rsID"] + "-" + merged["Allele"]
-        af_map = merged.groupby("SNV")["AF_corrected"].max().to_dict()
-        vmin = merged["AF_corrected"].min()
-        vmax = merged["AF_corrected"].max()
 
+        # -------------------------
+        # Mapa para rede (pop selecionada)
+        # -------------------------
+        af_map = merged.groupby("SNV")[f"AF_{pop}"].max().to_dict()
+        vmin = merged[f"AF_{pop}"].min()
+        vmax = merged[f"AF_{pop}"].max()
+
+        # -------------------------
+        # Rede
+        # -------------------------
         agg_df = df.groupby(["Phenotype", "SNV"], as_index=False)["Odds"].max()
         net = nx.from_pandas_edgelist(agg_df, source="Phenotype", target="SNV", edge_attr="Odds")
 
-        # pega o maior Odds para normalização
         max_odds = agg_df["Odds"].max()
 
-        # cor e espessura da aresta proporcional ao Odds
         for u, v, d in net.edges(data=True):
             d["color"] = "gray"
             d["width"] = 1 + 3 * (d["Odds"] / max_odds)
 
-        # atributos dos nós
         for node in net.nodes():
             if node in df["Phenotype"].values:
                 net.nodes[node]["color"] = "skyblue"
@@ -251,7 +262,7 @@ with tab2:
                 net.nodes[node]["shape"] = "dot"
 
         elements = []
-        # nós
+
         for node, data in net.nodes(data=True):
             elements.append({
                 "data": {"id": str(node), "label": str(node)},
@@ -262,7 +273,7 @@ with tab2:
                     "shape": data.get("shape", "ellipse"),
                 },
             })
-        # arestas
+
         for u, v, data in net.edges(data=True):
             elements.append({
                 "data": {"source": str(u), "target": str(v)},
@@ -271,56 +282,93 @@ with tab2:
                     "width": data.get("width", 2),
                 },
             })
-        # -------- Estilo base --------
+
         stylesheet = [
             {"selector": "node", "style": {"label": "data(label)", "background-color": "skyblue"}},
             {"selector": "edge", "style": {"curve-style": "bezier", "line-color": "gray"}}
         ]
 
-        col1, col2 = st.columns(2)
-        # Opções de layout
+        # -------------------------
+        # Layout
+        # -------------------------
 
         layout_options = ["grid", "circle", "cose", "breadthfirst", "concentric"]
-        layout = []
-        with col1:
-            selected_layout = st.radio("Layout:", layout_options, index=2, horizontal=True)
+        selected_layout = st.radio("Layout:", layout_options, index=2, horizontal=True)
 
-            cose_params = {
-                "name": "cose",
-                "fit": True,
-                "padding": 10,
-                "nodeRepulsion": 400000,
-                "idealEdgeLength": 200,
-                "edgeElasticity": 80,
-                "gravity": 1,
-                "numIter": 3000,
-            }
+        cose_params = {
+            "name": "cose",
+            "fit": True,
+            "padding": 10,
+            "nodeRepulsion": 400000,
+            "idealEdgeLength": 200,
+            "edgeElasticity": 80,
+            "gravity": 1,
+            "numIter": 3000,
+        }
 
-            # botão reset
-            if st.button("Reset"):
-                if selected_layout == "cose":
-                    layout = {**cose_params, "fit": True}
-                else:
-                    layout = {"name": selected_layout, "fit": True, "padding": 30}
+        if st.button("Reset"):
+            if selected_layout == "cose":
+                layout = {**cose_params, "fit": True}
             else:
-                if selected_layout == "cose":
-                    layout = {**cose_params, "fit": True}
-                else:
-                    layout = {"name": selected_layout, "fit": False}
-
-        # Renderiza Cytoscape
-        selected = cytoscape(elements, stylesheet, layout=layout, height="700px")
+                layout = {"name": selected_layout, "fit": True, "padding": 30}
+        else:
+            if selected_layout == "cose":
+                layout = {**cose_params, "fit": True}
+            else:
+                layout = {"name": selected_layout, "fit": False}
 
         st.markdown("**Node color = Risk Allele Frequency**")
-        st.markdown("Light pink → Low frequency | Red → High frequency")
+        st.markdown("Light red → Low frequency | Dark red → High frequency")
 
-
+        selected = cytoscape(elements, stylesheet, layout=layout, height="700px")
 
         if len(selected["nodes"]) > 0:
             selected_snps = [snp.split("-")[0] for snp in selected["nodes"] if snp.startswith("rs")]
             gp = GProfiler(return_dataframe=True)
             df_snp_sense = gp.snpense(selected_snps)
             st.dataframe(df_snp_sense)
+
+        st.markdown("### SNP Frequencies (All Populations)")
+
+        table_df = (
+            merged[
+                ["rsID", "Allele", "REF", "ALT",
+                 "AF_AFR", "AF_AMR", "AF_EAS", "AF_EUR", "AF_SAS"]
+            ]
+            .drop_duplicates()
+            .rename(columns={"Allele": "Risk_Allele"})
+        )
+
+        # ordena pela população selecionada
+        table_df = table_df.sort_values(f"AF_{pop}", ascending=True)
+
+        # filtro por seleção na rede
+        if len(selected["nodes"]) > 0:
+            selected_snps = [
+                snp.split("-")[0]
+                for snp in selected["nodes"]
+                if snp.startswith("rs")
+            ]
+            table_df = table_df[table_df["rsID"].isin(selected_snps)]
+
+        st.dataframe(
+            table_df.style.background_gradient(
+                subset=["AF_AFR", "AF_AMR", "AF_EAS", "AF_EUR", "AF_SAS"],
+                cmap="Reds"
+            ),
+            use_container_width=True,
+            height=700
+        )
+
+        # download
+        st.download_button(
+            "Download CSV",
+            table_df.to_csv(index=False),
+            "snp_frequencies_all_populations.csv",
+            "text/csv"
+        )
+
+
     else:
         st.info(
             "The **DANCE** module renders the *SNP–Disease* network dynamically. "
